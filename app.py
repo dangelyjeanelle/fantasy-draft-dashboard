@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
+from difflib import get_close_matches
 
-st.set_page_config(page_title="Draft Strategy & Real-Time Engine", layout="wide")
+st.set_page_config(page_title="Draft Strategy Engine", layout="wide")
 
 st.title("⚡ Dynamic Draft Recommendation Dashboard")
 st.caption("League ID: 1721704463 | 8-Team PPR + Heavy IDP & Punters")
@@ -12,40 +13,6 @@ if "drafted_players" not in st.session_state:
 
 if "my_roster" not in st.session_state:
     st.session_state["my_roster"] = []
-
-# --- CALLBACK FUNCTIONS (FIXES STATE UPDATE ISSUE) ---
-def add_opponent_pick():
-    name = st.session_state.get("player_input", "").strip()
-    if name:
-        st.session_state["drafted_players"].append(name)
-        st.session_state["player_input"] = ""  # Reset text field
-
-def add_my_pick():
-    name = st.session_state.get("player_input", "").strip()
-    if name:
-        st.session_state["drafted_players"].append(name)
-        st.session_state["my_roster"].append(name)
-        st.session_state["player_input"] = ""  # Reset text field
-
-def reset_board():
-    st.session_state["drafted_players"] = []
-    st.session_state["my_roster"] = []
-    st.session_state["player_input"] = ""
-
-# --- SIDEBAR CONTROLS ---
-st.sidebar.header("🕹️ Live Draft Controls")
-
-# Input field bound to key="player_input"
-st.sidebar.text_input("Enter Player Name:", key="player_input")
-
-col_sb1, col_sb2 = st.sidebar.columns(2)
-with col_sb1:
-    st.button("Cross Off (Opponent)", on_click=add_opponent_pick, use_container_width=True)
-with col_sb2:
-    st.button("Draft to MY TEAM", on_click=add_my_pick, use_container_width=True)
-
-st.sidebar.markdown("---")
-st.sidebar.button("Reset Draft Board", on_click=reset_board, use_container_width=True)
 
 # --- MASTER RANKINGS DATA ---
 @st.cache_data(ttl=600)
@@ -59,6 +26,7 @@ def load_draft_data():
         {"Player": "Josh Allen", "Pos": "QB", "ESPN_Rank": 25, "Consensus_ECR": 16, "Proj_Pts": 350.0, "VORP": 65.0},
         {"Player": "Brock Bowers", "Pos": "TE", "ESPN_Rank": 40, "Consensus_ECR": 24, "Proj_Pts": 220.0, "VORP": 50.0},
         {"Player": "Ladd McConkey", "Pos": "WR", "ESPN_Rank": 58, "Consensus_ECR": 34, "Proj_Pts": 230.0, "VORP": 35.0},
+        {"Player": "Luther Burden III", "Pos": "WR", "ESPN_Rank": 72, "Consensus_ECR": 44, "Proj_Pts": 215.0, "VORP": 28.0},
         {"Player": "Roquan Smith", "Pos": "LB", "ESPN_Rank": 130, "Consensus_ECR": 60, "Proj_Pts": 205.0, "VORP": 75.0},
         {"Player": "Fred Warner", "Pos": "LB", "ESPN_Rank": 142, "Consensus_ECR": 68, "Proj_Pts": 195.0, "VORP": 65.0},
         {"Player": "Kyle Hamilton", "Pos": "S", "ESPN_Rank": 165, "Consensus_ECR": 90, "Proj_Pts": 160.0, "VORP": 30.0},
@@ -71,50 +39,119 @@ def load_draft_data():
 
 master_df = load_draft_data()
 
-# --- CASE-INSENSITIVE PARTIAL MATCH FILTER ---
-def is_drafted(player_name, drafted_list):
-    for drafted in drafted_list:
-        if drafted.lower() in player_name.lower():
-            return True
-    return False
+# Helper function to fuzzy match input names to master player names
+def resolve_player_name(raw_input, available_list):
+    if not raw_input:
+        return None
+    # 1. Exact or Substring match
+    for p in available_list:
+        if raw_input.lower() in p.lower():
+            return p
+    # 2. Fuzzy match for typos/punctuation
+    matches = get_close_matches(raw_input, available_list, n=1, cutoff=0.5)
+    return matches[0] if matches else None
 
-available_df = master_df[~master_df["Player"].apply(lambda p: is_drafted(p, st.session_state["drafted_players"]))]
-my_team_df = master_df[master_df["Player"].apply(lambda p: is_drafted(p, st.session_state["my_roster"]))]
+# Filter Available vs My Team
+available_df = master_df[~master_df["Player"].isin(st.session_state["drafted_players"])]
+my_team_df = master_df[master_df["Player"].isin(st.session_state["my_roster"])]
 
-# --- REAL-TIME RECOMMENDATION ENGINE ---
-st.subheader("💡 Real-Time On-The-Clock Pick Recommendations")
+available_names = available_df["Player"].tolist()
 
-def get_recommendations(avail_df, my_df):
-    recs = []
-    my_positions = my_df["Pos"].value_counts().to_dict() if not my_df.empty else {}
+# --- CALLBACK FUNCTIONS ---
+def handle_opponent_pick():
+    selected = st.session_state.get("dropdown_selection")
+    typed = st.session_state.get("text_selection")
+    target = selected if selected else resolve_player_name(typed, available_names)
     
-    # 1. Top VORP Available
-    top_vorp = avail_df.sort_values(by="VORP", ascending=False).head(2)
-    for _, row in top_vorp.iterrows():
-        recs.append({
-            "Player": row["Player"],
-            "Pos": row["Pos"],
-            "Reason": f"Highest available VORP ({row['VORP']} pts over baseline). Pure talent target.",
-            "Action": "DRAFT NOW" if row["Value_Delta"] <= 10 else "HIGH VALUE TARGET"
-        })
-        
-    # 2. Check for IDP Advantage (If LB starter needed)
-    lb_count = my_positions.get("LB", 0)
+    if target and target not in st.session_state["drafted_players"]:
+        st.session_state["drafted_players"].append(target)
+    st.session_state["text_selection"] = ""
+
+def handle_my_pick():
+    selected = st.session_state.get("dropdown_selection")
+    typed = st.session_state.get("text_selection")
+    target = selected if selected else resolve_player_name(typed, available_names)
+    
+    if target and target not in st.session_state["drafted_players"]:
+        st.session_state["drafted_players"].append(target)
+        st.session_state["my_roster"].append(target)
+    st.session_state["text_selection"] = ""
+
+def reset_board():
+    st.session_state["drafted_players"] = []
+    st.session_state["my_roster"] = []
+    st.session_state["text_selection"] = ""
+
+# --- SIDEBAR DRAFT CONTROLS ---
+st.sidebar.header("🕹️ Live Draft Controls")
+
+st.sidebar.selectbox("Predictive Player Search:", options=[""] + available_names, key="dropdown_selection")
+st.sidebar.text_input("Or Quick Type Name (Fuzzy Matching):", key="text_selection")
+
+col1, col2 = st.sidebar.columns(2)
+with col1:
+    st.button("Cross Off (Opponent)", on_click=handle_opponent_pick, use_container_width=True)
+with col2:
+    st.button("Draft to MY TEAM", on_click=handle_my_pick, use_container_width=True)
+
+st.sidebar.markdown("---")
+st.sidebar.button("Reset Draft Board", on_click=reset_board, use_container_width=True)
+
+# --- SENSIBLE POSITION ORDER RECOMMENDATION ENGINE ---
+st.subheader("💡 Real-Time On-The-Clock Recommendations")
+
+def get_sensible_recommendations(avail_df, my_df):
+    recs = []
+    my_pos = my_df["Pos"].value_counts().to_dict() if not my_df.empty else {}
+    
+    rb_count = my_pos.get("RB", 0)
+    wr_count = my_pos.get("WR", 0)
+    qb_count = my_pos.get("QB", 0)
+    te_count = my_pos.get("TE", 0)
+    lb_count = my_pos.get("LB", 0)
+
+    # 1. Early Priority: Core Starters (RB/WR)
+    if rb_count == 0 or wr_count == 0:
+        top_skill = avail_df[avail_df["Pos"].isin(["RB", "WR"])].sort_values(by="VORP", ascending=False).head(2)
+        for _, r in top_skill.iterrows():
+            recs.append({
+                "Priority": "1. High (Core Starter)",
+                "Player": r["Player"],
+                "Pos": r["Pos"],
+                "Reason": f"Top available skill starter with {r['VORP']} VORP.",
+                "Action": "MUST DRAFT" if r["Value_Delta"] <= 5 else "HIGH VALUE TARGET"
+            })
+
+    # 2. Mid Priority: Elite IDP Linebacker (2 required starters)
     if lb_count < 2:
         top_lbs = avail_df[avail_df["Pos"] == "LB"].head(1)
         if not top_lbs.empty:
-            lb_row = top_lbs.iloc[0]
+            lbr = top_lbs.iloc[0]
             recs.append({
-                "Player": lb_row["Player"],
+                "Priority": "2. Medium (IDP Advantage)",
+                "Player": lbr["Player"],
                 "Pos": "LB",
-                "Reason": f"ESPN ranks LBs low (Rank {lb_row['ESPN_Rank']}), but 4pt sacks/1.5pt tackles make him an elite starter.",
-                "Action": "STEAL TARGET (Can delay 1-2 rounds)"
+                "Reason": f"4pt sacks/1.5pt tackles give top LBs ~200 pts. ESPN ranks them low ({lbr['ESPN_Rank']}).",
+                "Action": "STEAL TARGET (Delay 1-2 Rounds)"
             })
-            
-    return pd.DataFrame(recs) if recs else pd.DataFrame(columns=["Player", "Pos", "Reason", "Action"])
 
-recommendations_df = get_recommendations(available_df, my_team_df)
-st.dataframe(recommendations_df, use_container_width=True, hide_index=True)
+    # 3. Onesie Positions: QB / TE (Only 1 starter required)
+    if qb_count == 0:
+        top_qb = avail_df[avail_df["Pos"] == "QB"].head(1)
+        if not top_qb.empty:
+            qbr = top_qb.iloc[0]
+            recs.append({
+                "Priority": "3. Situational (QB)",
+                "Player": qbr["Player"],
+                "Pos": "QB",
+                "Reason": "In 8-team leagues, QB depth is high. Only draft if top-tier QB falls.",
+                "Action": "DRAFT IF ELITE TIER FALLS"
+            })
+
+    return pd.DataFrame(recs) if recs else pd.DataFrame(columns=["Priority", "Player", "Pos", "Reason", "Action"])
+
+recs_df = get_sensible_recommendations(available_df, my_team_df)
+st.dataframe(recs_df, use_container_width=True, hide_index=True)
 
 st.markdown("---")
 
@@ -123,13 +160,13 @@ col1, col2 = st.columns([2, 1])
 
 with col1:
     st.subheader("📋 Available Players Grid")
-    pos_selected = st.multiselect("Filter Position:", ["QB", "RB", "WR", "TE", "LB", "S", "CB", "P"], default=["RB", "WR", "LB"])
+    pos_selected = st.multiselect("Filter Positions:", ["QB", "RB", "WR", "TE", "LB", "S", "CB", "P"], default=["RB", "WR", "LB"])
     view_df = available_df[available_df["Pos"].isin(pos_selected)] if pos_selected else available_df
     st.dataframe(view_df.sort_values(by="VORP", ascending=False), use_container_width=True, hide_index=True)
 
 with col2:
     st.subheader("🛡️ My Current Roster")
-    st.caption(f"Total Players on My Team: {len(st.session_state['my_roster'])}")
+    st.caption(f"Players Drafted: {len(st.session_state['my_roster'])}")
     if not my_team_df.empty:
         st.dataframe(my_team_df[["Player", "Pos", "Proj_Pts"]], use_container_width=True, hide_index=True)
     else:
