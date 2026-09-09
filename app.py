@@ -1,127 +1,122 @@
 import streamlit as st
 import pandas as pd
 
-# Page Configuration
-st.set_page_config(
-    page_title="Draft Arbitrage Dashboard | League 1721704463",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="Draft Strategy & Real-Time Engine", layout="wide")
 
-st.title("⚡ Draft Arbitrage & Value Dashboard")
-st.caption("League ID: 1721704463 | 8-Team PPR + High-Scoring IDP & Punters")
+st.title("⚡ Dynamic Draft Recommendation Dashboard")
+st.caption("League ID: 1721704463 | 8-Team PPR + Heavy IDP & Punters")
 
-# --- SESSION STATE FOR LIVE DRAFTING ---
+# --- SESSION STATE MANAGEMENT ---
 if "drafted_players" not in st.session_state:
     st.session_state["drafted_players"] = []
 
-# --- SIDEBAR CONTROLS ---
-st.sidebar.header("Draft Management")
+if "my_roster" not in st.session_state:
+    st.session_state["my_roster"] = []
 
-# Quick manual cross-off
-player_to_draft = st.sidebar.text_input("Enter Player Name to Cross Off:")
-if st.sidebar.button("Mark Drafted") and player_to_draft:
-    st.session_state["drafted_players"].append(player_to_draft.strip())
-    st.sidebar.success(f"Removed: {player_to_draft}")
+# --- SIDEBAR: DRAFT & ROSTER CONTROLS ---
+st.sidebar.header("🕹️ Live Draft Controls")
+
+col_sb1, col_sb2 = st.sidebar.columns(2)
+player_input = st.sidebar.text_input("Player Name:")
+
+if st.sidebar.button("Cross Off (Opponent Pick)"):
+    if player_input:
+        st.session_state["drafted_players"].append(player_input.strip())
+        st.sidebar.success(f"Crossed off: {player_input}")
+
+if st.sidebar.button("Draft to MY TEAM"):
+    if player_input:
+        st.session_state["drafted_players"].append(player_input.strip())
+        st.session_state["my_roster"].append(player_input.strip())
+        st.sidebar.balloons()
 
 if st.sidebar.button("Reset Draft Board"):
     st.session_state["drafted_players"] = []
-    st.sidebar.warning("Board Reset!")
+    st.session_state["my_roster"] = []
+    st.sidebar.warning("Reset Complete")
 
-st.sidebar.markdown("---")
-st.sidebar.write(f"**Total Drafted:** {len(st.session_state['drafted_players'])} players")
-if st.session_state["drafted_players"]:
-    with st.sidebar.expander("View Drafted List"):
-        st.write(", ".join(st.session_state["drafted_players"]))
-
-# --- MASTER DATASET (Custom Tuned for League Settings) ---
+# --- MASTER RANKINGS DATA ---
 @st.cache_data(ttl=600)
-def get_master_rankings():
-    # Tuned specifically for 8-team PPR, boosted LBs (4pt Sack/FF/FR, 1.5pt Tackle), and Punters
+def load_draft_data():
     data = [
-        # Skill Positions
-        {"Player": "Jahmyr Gibbs", "Pos": "RB", "ESPN_Rank": 1, "Consensus_ECR": 1, "Proj_Pts": 315.0, "Tier": 1},
-        {"Player": "Ja'Marr Chase", "Pos": "WR", "ESPN_Rank": 2, "Consensus_ECR": 1, "Proj_Pts": 310.0, "Tier": 1},
-        {"Player": "Puka Nacua", "Pos": "WR", "ESPN_Rank": 6, "Consensus_ECR": 3, "Proj_Pts": 298.0, "Tier": 1},
-        {"Player": "Bijan Robinson", "Pos": "RB", "ESPN_Rank": 3, "Consensus_ECR": 2, "Proj_Pts": 292.0, "Tier": 1},
-        {"Player": "Amon-Ra St. Brown", "Pos": "WR", "ESPN_Rank": 12, "Consensus_ECR": 5, "Proj_Pts": 288.0, "Tier": 1},
-        {"Player": "CeeDee Lamb", "Pos": "WR", "ESPN_Rank": 10, "Consensus_ECR": 6, "Proj_Pts": 285.0, "Tier": 1},
-        {"Player": "Christian McCaffrey", "Pos": "RB", "ESPN_Rank": 4, "Consensus_ECR": 4, "Proj_Pts": 280.0, "Tier": 1},
-        {"Player": "Josh Allen", "Pos": "QB", "ESPN_Rank": 25, "Consensus_ECR": 16, "Proj_Pts": 350.0, "Tier": 1},
-        {"Player": "Lamar Jackson", "Pos": "QB", "ESPN_Rank": 38, "Consensus_ECR": 22, "Proj_Pts": 335.0, "Tier": 1},
-        {"Player": "Brock Bowers", "Pos": "TE", "ESPN_Rank": 40, "Consensus_ECR": 24, "Proj_Pts": 220.0, "Tier": 1},
-        {"Player": "Ladd McConkey", "Pos": "WR", "ESPN_Rank": 58, "Consensus_ECR": 34, "Proj_Pts": 230.0, "Tier": 2},
-        {"Player": "Luther Burden III", "Pos": "WR", "ESPN_Rank": 72, "Consensus_ECR": 44, "Proj_Pts": 215.0, "Tier": 2},
-        
-        # High-Value IDPs (Scoring Boosted)
-        {"Player": "Roquan Smith", "Pos": "LB", "ESPN_Rank": 130, "Consensus_ECR": 60, "Proj_Pts": 205.0, "Tier": 1},
-        {"Player": "Fred Warner", "Pos": "LB", "ESPN_Rank": 142, "Consensus_ECR": 68, "Proj_Pts": 195.0, "Tier": 1},
-        {"Player": "Foyesade Oluokun", "Pos": "LB", "ESPN_Rank": 150, "Consensus_ECR": 75, "Proj_Pts": 188.0, "Tier": 1},
-        {"Player": "Kyle Hamilton", "Pos": "S", "ESPN_Rank": 165, "Consensus_ECR": 90, "Proj_Pts": 160.0, "Tier": 1},
-        {"Player": "Trent McDuffie", "Pos": "CB", "ESPN_Rank": 180, "Consensus_ECR": 110, "Proj_Pts": 145.0, "Tier": 1},
-        
-        # High-Value Punters (44+ Yd Bonus + In20)
-        {"Player": "AJ Cole", "Pos": "P", "ESPN_Rank": 220, "Consensus_ECR": 150, "Proj_Pts": 95.0, "Tier": 1},
-        {"Player": "Ryan Stonehouse", "Pos": "P", "ESPN_Rank": 225, "Consensus_ECR": 155, "Proj_Pts": 92.0, "Tier": 1},
+        {"Player": "Jahmyr Gibbs", "Pos": "RB", "ESPN_Rank": 1, "Consensus_ECR": 1, "Proj_Pts": 315.0, "VORP": 120.0},
+        {"Player": "Ja'Marr Chase", "Pos": "WR", "ESPN_Rank": 2, "Consensus_ECR": 1, "Proj_Pts": 310.0, "VORP": 115.0},
+        {"Player": "Puka Nacua", "Pos": "WR", "ESPN_Rank": 6, "Consensus_ECR": 3, "Proj_Pts": 298.0, "VORP": 103.0},
+        {"Player": "Bijan Robinson", "Pos": "RB", "ESPN_Rank": 3, "Consensus_ECR": 2, "Proj_Pts": 292.0, "VORP": 97.0},
+        {"Player": "CeeDee Lamb", "Pos": "WR", "ESPN_Rank": 10, "Consensus_ECR": 6, "Proj_Pts": 285.0, "VORP": 90.0},
+        {"Player": "Josh Allen", "Pos": "QB", "ESPN_Rank": 25, "Consensus_ECR": 16, "Proj_Pts": 350.0, "VORP": 65.0},
+        {"Player": "Brock Bowers", "Pos": "TE", "ESPN_Rank": 40, "Consensus_ECR": 24, "Proj_Pts": 220.0, "VORP": 50.0},
+        {"Player": "Ladd McConkey", "Pos": "WR", "ESPN_Rank": 58, "Consensus_ECR": 34, "Proj_Pts": 230.0, "VORP": 35.0},
+        {"Player": "Roquan Smith", "Pos": "LB", "ESPN_Rank": 130, "Consensus_ECR": 60, "Proj_Pts": 205.0, "VORP": 75.0},
+        {"Player": "Fred Warner", "Pos": "LB", "ESPN_Rank": 142, "Consensus_ECR": 68, "Proj_Pts": 195.0, "VORP": 65.0},
+        {"Player": "Kyle Hamilton", "Pos": "S", "ESPN_Rank": 165, "Consensus_ECR": 90, "Proj_Pts": 160.0, "VORP": 30.0},
+        {"Player": "Trent McDuffie", "Pos": "CB", "ESPN_Rank": 180, "Consensus_ECR": 110, "Proj_Pts": 145.0, "VORP": 25.0},
+        {"Player": "AJ Cole", "Pos": "P", "ESPN_Rank": 220, "Consensus_ECR": 150, "Proj_Pts": 95.0, "VORP": 25.0},
     ]
     df = pd.DataFrame(data)
-    df["Arbitrage_Value"] = df["ESPN_Rank"] - df["Consensus_ECR"]
+    df["Value_Delta"] = df["ESPN_Rank"] - df["Consensus_ECR"]
     return df
 
-master_df = get_master_rankings()
-
-# Filter out drafted players
+master_df = load_draft_data()
 available_df = master_df[~master_df["Player"].isin(st.session_state["drafted_players"])]
+my_team_df = master_df[master_df["Player"].isin(st.session_state["my_roster"])]
 
-# --- LAYOUT SETUP ---
-col1, col2 = st.columns([2.5, 1])
+# --- REAL-TIME RECOMMENDATION ENGINE ---
+st.subheader("💡 Real-Time On-The-Clock Pick Recommendations")
 
-with col1:
-    st.subheader("🎯 Market Arbitrage Grid (Best Value Picks)")
-    st.caption("Positive **Arbitrage Value** means ESPN ranks them LOWER than industry consensus (Draft Targets).")
+def get_recommendations(avail_df, my_df):
+    recs = []
     
-    # Filtering Controls
-    pos_selected = st.multiselect(
-        "Filter Positions:",
-        options=["QB", "RB", "WR", "TE", "LB", "S", "CB", "P"],
-        default=["RB", "WR", "LB"]
-    )
+    # Analyze my current position counts
+    my_positions = my_df["Pos"].value_counts().to_dict()
     
-    if pos_selected:
-        view_df = available_df[available_df["Pos"].isin(pos_selected)]
-    else:
-        view_df = available_df
+    # 1. Check for Highest VORP available
+    top_vorp = avail_df.sort_values(by="VORP", ascending=False).head(3)
+    for _, row in top_vorp.iterrows():
+        recs.append({
+            "Player": row["Player"],
+            "Pos": row["Pos"],
+            "Reason": f"Highest available VORP ({row['VORP']} pts over baseline). Pure talent pick.",
+            "Action": "DRAFT NOW" if row["Value_Delta"] <= 10 else "CONSIDER / WAIT"
+        })
+        
+    # 2. Check for IDP Advantage (If LB starter needed)
+    lb_count = my_positions.get("LB", 0)
+    if lb_count < 2:
+        top_lbs = avail_df[avail_df["Pos"] == "LB"].head(1)
+        if not top_lbs.empty:
+            lb_row = top_lbs.iloc[0]
+            recs.append({
+                "Player": lb_row["Player"],
+                "Pos": "LB",
+                "Reason": f"ESPN ranks LBs low (Rank {lb_row['ESPN_Rank']}), but 4pt sacks/1.5pt tackles make him an elite starter.",
+                "Action": "STEAL TARGET (Can delay 1-2 rounds)"
+            })
+            
+    return pd.DataFrame(recs)
 
-    st.dataframe(
-        view_df.sort_values(by="Arbitrage_Value", ascending=False),
-        column_config={
-            "Arbitrage_Value": st.column_config.NumberColumn(
-                "Value Delta (Rounds/Picks)",
-                help="Higher positive numbers = Steals on ESPN!",
-                format="+%d"
-            ),
-            "Proj_Pts": st.column_config.NumberColumn("Projected Points", format="%.1f pts")
-        },
-        use_container_width=True,
-        hide_index=True
-    )
+recommendations_df = get_recommendations(available_df, my_team_df)
 
-with col2:
-    st.subheader("⚠️ Positional Tier Cliffs")
-    st.caption("Drop-off in point production to the next available tier.")
-    
-    # Calculate real-time top gaps
-    for pos in ["WR", "RB", "LB", "QB"]:
-        pos_avail = available_df[available_df["Pos"] == pos]
-        if len(pos_avail) >= 2:
-            gap = pos_avail.iloc[0]["Proj_Pts"] - pos_avail.iloc[1]["Proj_Pts"]
-            top_player = pos_avail.iloc[0]["Player"]
-            st.metric(
-                label=f"Next Best {pos} ({top_player})",
-                value=f"{pos_avail.iloc[0]['Proj_Pts']} pts",
-                delta=f"-{gap:.1f} pts to next option",
-                delta_color="inverse"
-            )
+st.dataframe(
+    recommendations_df,
+    use_container_width=True,
+    hide_index=True
+)
 
 st.markdown("---")
-st.info("💡 **Draft Strategy Tip for Tonight:** Because your league has 2 LB starters with 4pt sacks/turnovers & 1.5pt tackles, top LBs (Roquan, Warner) outscore WR2s. ESPN's default client places LBs in rounds 15+, allowing you to scoop up elite starters late!")
+
+# --- MAIN DISPLAY GRID ---
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.subheader("📋 Available Players Grid")
+    pos_selected = st.multiselect("Filter Position:", ["QB", "RB", "WR", "TE", "LB", "S", "CB", "P"], default=["RB", "WR", "LB"])
+    view_df = available_df[available_df["Pos"].isin(pos_selected)] if pos_selected else available_df
+    st.dataframe(view_df.sort_values(by="VORP", ascending=False), use_container_width=True, hide_index=True)
+
+with col2:
+    st.subheader("🛡️ My Current Roster")
+    if not my_team_df.empty:
+        st.dataframe(my_team_df[["Player", "Pos", "Proj_Pts"]], use_container_width=True, hide_index=True)
+    else:
+        st.info("No players drafted to your team yet.")
