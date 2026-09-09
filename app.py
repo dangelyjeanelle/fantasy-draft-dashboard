@@ -6,34 +6,46 @@ st.set_page_config(page_title="Draft Strategy & Real-Time Engine", layout="wide"
 st.title("⚡ Dynamic Draft Recommendation Dashboard")
 st.caption("League ID: 1721704463 | 8-Team PPR + Heavy IDP & Punters")
 
-# --- SESSION STATE MANAGEMENT ---
+# --- INITIALIZE SESSION STATE ---
 if "drafted_players" not in st.session_state:
     st.session_state["drafted_players"] = []
 
 if "my_roster" not in st.session_state:
     st.session_state["my_roster"] = []
 
-# --- SIDEBAR: DRAFT & ROSTER CONTROLS ---
-st.sidebar.header("🕹️ Live Draft Controls")
+# --- CALLBACK FUNCTIONS (FIXES STATE UPDATE ISSUE) ---
+def add_opponent_pick():
+    name = st.session_state.get("player_input", "").strip()
+    if name:
+        st.session_state["drafted_players"].append(name)
+        st.session_state["player_input"] = ""  # Reset text field
 
-col_sb1, col_sb2 = st.sidebar.columns(2)
-player_input = st.sidebar.text_input("Player Name:")
+def add_my_pick():
+    name = st.session_state.get("player_input", "").strip()
+    if name:
+        st.session_state["drafted_players"].append(name)
+        st.session_state["my_roster"].append(name)
+        st.session_state["player_input"] = ""  # Reset text field
 
-if st.sidebar.button("Cross Off (Opponent Pick)"):
-    if player_input:
-        st.session_state["drafted_players"].append(player_input.strip())
-        st.sidebar.success(f"Crossed off: {player_input}")
-
-if st.sidebar.button("Draft to MY TEAM"):
-    if player_input:
-        st.session_state["drafted_players"].append(player_input.strip())
-        st.session_state["my_roster"].append(player_input.strip())
-        st.sidebar.balloons()
-
-if st.sidebar.button("Reset Draft Board"):
+def reset_board():
     st.session_state["drafted_players"] = []
     st.session_state["my_roster"] = []
-    st.sidebar.warning("Reset Complete")
+    st.session_state["player_input"] = ""
+
+# --- SIDEBAR CONTROLS ---
+st.sidebar.header("🕹️ Live Draft Controls")
+
+# Input field bound to key="player_input"
+st.sidebar.text_input("Enter Player Name:", key="player_input")
+
+col_sb1, col_sb2 = st.sidebar.columns(2)
+with col_sb1:
+    st.button("Cross Off (Opponent)", on_click=add_opponent_pick, use_container_width=True)
+with col_sb2:
+    st.button("Draft to MY TEAM", on_click=add_my_pick, use_container_width=True)
+
+st.sidebar.markdown("---")
+st.sidebar.button("Reset Draft Board", on_click=reset_board, use_container_width=True)
 
 # --- MASTER RANKINGS DATA ---
 @st.cache_data(ttl=600)
@@ -58,26 +70,32 @@ def load_draft_data():
     return df
 
 master_df = load_draft_data()
-available_df = master_df[~master_df["Player"].isin(st.session_state["drafted_players"])]
-my_team_df = master_df[master_df["Player"].isin(st.session_state["my_roster"])]
+
+# --- CASE-INSENSITIVE PARTIAL MATCH FILTER ---
+def is_drafted(player_name, drafted_list):
+    for drafted in drafted_list:
+        if drafted.lower() in player_name.lower():
+            return True
+    return False
+
+available_df = master_df[~master_df["Player"].apply(lambda p: is_drafted(p, st.session_state["drafted_players"]))]
+my_team_df = master_df[master_df["Player"].apply(lambda p: is_drafted(p, st.session_state["my_roster"]))]
 
 # --- REAL-TIME RECOMMENDATION ENGINE ---
 st.subheader("💡 Real-Time On-The-Clock Pick Recommendations")
 
 def get_recommendations(avail_df, my_df):
     recs = []
+    my_positions = my_df["Pos"].value_counts().to_dict() if not my_df.empty else {}
     
-    # Analyze my current position counts
-    my_positions = my_df["Pos"].value_counts().to_dict()
-    
-    # 1. Check for Highest VORP available
-    top_vorp = avail_df.sort_values(by="VORP", ascending=False).head(3)
+    # 1. Top VORP Available
+    top_vorp = avail_df.sort_values(by="VORP", ascending=False).head(2)
     for _, row in top_vorp.iterrows():
         recs.append({
             "Player": row["Player"],
             "Pos": row["Pos"],
-            "Reason": f"Highest available VORP ({row['VORP']} pts over baseline). Pure talent pick.",
-            "Action": "DRAFT NOW" if row["Value_Delta"] <= 10 else "CONSIDER / WAIT"
+            "Reason": f"Highest available VORP ({row['VORP']} pts over baseline). Pure talent target.",
+            "Action": "DRAFT NOW" if row["Value_Delta"] <= 10 else "HIGH VALUE TARGET"
         })
         
     # 2. Check for IDP Advantage (If LB starter needed)
@@ -93,15 +111,10 @@ def get_recommendations(avail_df, my_df):
                 "Action": "STEAL TARGET (Can delay 1-2 rounds)"
             })
             
-    return pd.DataFrame(recs)
+    return pd.DataFrame(recs) if recs else pd.DataFrame(columns=["Player", "Pos", "Reason", "Action"])
 
 recommendations_df = get_recommendations(available_df, my_team_df)
-
-st.dataframe(
-    recommendations_df,
-    use_container_width=True,
-    hide_index=True
-)
+st.dataframe(recommendations_df, use_container_width=True, hide_index=True)
 
 st.markdown("---")
 
@@ -116,6 +129,7 @@ with col1:
 
 with col2:
     st.subheader("🛡️ My Current Roster")
+    st.caption(f"Total Players on My Team: {len(st.session_state['my_roster'])}")
     if not my_team_df.empty:
         st.dataframe(my_team_df[["Player", "Pos", "Proj_Pts"]], use_container_width=True, hide_index=True)
     else:
